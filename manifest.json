@@ -1,0 +1,17 @@
+{
+  "name": "SuperTonic - Learn Italian",
+  "short_name": "SuperTonic",
+  "description": "Spaced repetition flashcards for learning Italian",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f5f0e8",
+  "theme_color": "#fffef9",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23252420' width='100' height='100' rx='20'/><text x='50' y='68' text-anchor='middle' font-size='50'>🇮🇹</text></svg>",
+      "sizes": "100x100",
+      "type": "image/svg+xml"
+    }
+  ]
+}
