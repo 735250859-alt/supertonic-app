@@ -3853,48 +3853,68 @@ function celebrateBriefly() {
 
 // ── TTS PRONUNCIATION ────────────────────────────────
 let speaking = false;
+let speakTimer = null;
 
 function speakWord(text, btnEl) {
-  if (!text || speaking) return;
-  if (!window.speechSynthesis) return;
+  if (!text || !window.speechSynthesis) return;
 
-  // Cancel any ongoing speech
+  // Clear any stuck-speaking safety timer
+  if (speakTimer) { clearTimeout(speakTimer); speakTimer = null; }
+
+  // Cancel any ongoing speech, then delay for iOS (cancel→speak too fast = silent failure)
   speechSynthesis.cancel();
-  speaking = true;
 
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = 'it-IT';
-  utter.rate = 0.85;
-  utter.pitch = 1;
-  utter.volume = 1;
+  const doSpeak = () => {
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = 'it-IT';
+    utter.rate = 0.85;
+    utter.pitch = 1;
+    utter.volume = 1;
 
-  // Try to get an Italian voice
-  const voices = speechSynthesis.getVoices();
-  const itVoice = voices.find(v => v.lang.startsWith('it')) || voices.find(v => v.lang.startsWith('it-'));
-  if (itVoice) utter.voice = itVoice;
+    // Try to get an Italian voice (voices may have loaded async by now)
+    const voices = speechSynthesis.getVoices();
+    const itVoice = voices.find(v => v.lang.startsWith('it'));
+    if (itVoice) utter.voice = itVoice;
 
-  if (btnEl) {
-    btnEl.classList.add('speaking');
-    btnEl.textContent = '🔉';
-  }
-
-  utter.onend = () => {
-    speaking = false;
     if (btnEl) {
-      btnEl.classList.remove('speaking');
-      btnEl.textContent = '🔊';
+      btnEl.classList.add('speaking');
+      btnEl.textContent = '🔉';
     }
+
+    // Safety timeout — reset UI after 8s even if onend/onerror never fire (iOS bug)
+    speakTimer = setTimeout(() => {
+      speaking = false;
+      speakTimer = null;
+      if (btnEl) {
+        btnEl.classList.remove('speaking');
+        btnEl.textContent = '🔊';
+      }
+    }, 8000);
+
+    utter.onend = () => {
+      if (speakTimer) { clearTimeout(speakTimer); speakTimer = null; }
+      speaking = false;
+      if (btnEl) {
+        btnEl.classList.remove('speaking');
+        btnEl.textContent = '🔊';
+      }
+    };
+
+    utter.onerror = () => {
+      if (speakTimer) { clearTimeout(speakTimer); speakTimer = null; }
+      speaking = false;
+      if (btnEl) {
+        btnEl.classList.remove('speaking');
+        btnEl.textContent = '🔊';
+      }
+    };
+
+    speaking = true;
+    speechSynthesis.speak(utter);
   };
 
-  utter.onerror = () => {
-    speaking = false;
-    if (btnEl) {
-      btnEl.classList.remove('speaking');
-      btnEl.textContent = '🔊';
-    }
-  };
-
-  speechSynthesis.speak(utter);
+  // iOS needs ~50ms gap between cancel() and speak()
+  setTimeout(doSpeak, 60);
 }
 
 function speakCardWord() {
@@ -3920,10 +3940,20 @@ function speakExample() {
   speakWord(ex.s, btn);
 }
 
-// Preload voices on iOS (they load async)
+// Preload voices on iOS (they load async, and first speak may fail without warm-up)
 if (window.speechSynthesis) {
   speechSynthesis.getVoices();
-  speechSynthesis.onvoiceschanged = () => { speechSynthesis.getVoices(); };
+  speechSynthesis.onvoiceschanged = () => {
+    speechSynthesis.getVoices();
+    // iOS warm-up: speak a silent utterance to activate the audio session
+    // Must be done after voices change to ensure the audio context is ready
+    try {
+      var wu = new SpeechSynthesisUtterance(' ');
+      wu.volume = 0;
+      wu.rate = 1.5;
+      speechSynthesis.speak(wu);
+    } catch(e) {}
+  };
 }
 
 // ── QUIZ SCREEN ──────────────────────────────────────
@@ -4144,21 +4174,32 @@ function speakSentence(e, idx) {
   if (!text || !window.speechSynthesis) return;
   const sentences = text.split(/(?<=[.!?;])\s+/);
   if (idx < 0 || idx >= sentences.length) return;
-  speechSynthesis.cancel();
-  readingPaused = false;
   // Highlight the sentence
   el.querySelectorAll('.sentence').forEach(s => s.classList.remove('active'));
   const target = el.querySelectorAll('.sentence')[idx];
   if (target) target.classList.add('active');
-  const utter = new SpeechSynthesisUtterance(sentences[idx]);
-  utter.lang = 'it-IT';
-  utter.rate = readingSpeed;
-  const voices = speechSynthesis.getVoices();
-  const itVoice = voices.find(v => v.lang.startsWith('it'));
-  if (itVoice) utter.voice = itVoice;
-  utter.onend = () => { if (target) target.classList.remove('active'); };
-  utter.onerror = () => { if (target) target.classList.remove('active'); };
-  speechSynthesis.speak(utter);
+
+  speechSynthesis.cancel();
+  readingPaused = false;
+
+  // iOS needs small delay between cancel and speak
+  const doSpeak = () => {
+    const utter = new SpeechSynthesisUtterance(sentences[idx]);
+    utter.lang = 'it-IT';
+    utter.rate = readingSpeed;
+    const voices = speechSynthesis.getVoices();
+    const itVoice = voices.find(v => v.lang.startsWith('it'));
+    if (itVoice) utter.voice = itVoice;
+
+    // Safety timeout — reset highlight after 30s
+    const timer = setTimeout(() => { if (target) target.classList.remove('active'); }, 30000);
+
+    utter.onend = () => { clearTimeout(timer); if (target) target.classList.remove('active'); };
+    utter.onerror = () => { clearTimeout(timer); if (target) target.classList.remove('active'); };
+    speechSynthesis.speak(utter);
+  };
+
+  setTimeout(doSpeak, 60);
 }
 
 function showReadingList() {
@@ -4220,6 +4261,8 @@ function setReadingSpeed(rate, el) {
   if (currentAudio) currentAudio.playbackRate = rate;
 }
 
+let readingSpeakTimer = null;
+
 function speakReading() {
   if (currentReading < 0 || typeof READINGS === 'undefined' || currentReading >= READINGS.length) return;
   if (!window.speechSynthesis) return;
@@ -4230,6 +4273,7 @@ function speakReading() {
   if (speechSynthesis.speaking && !speechSynthesis.paused) {
     speechSynthesis.pause();
     readingPaused = true;
+    if (readingSpeakTimer) { clearTimeout(readingSpeakTimer); readingSpeakTimer = null; }
     if (btn) { btn.classList.remove('speaking'); btn.textContent = '▶️ Resume'; }
     return;
   }
@@ -4238,26 +4282,55 @@ function speakReading() {
   if (speechSynthesis.paused) {
     speechSynthesis.resume();
     readingPaused = false;
+    // Re-arm safety timer
+    if (readingSpeakTimer) clearTimeout(readingSpeakTimer);
+    readingSpeakTimer = setTimeout(() => {
+      readingPaused = false;
+      readingSpeakTimer = null;
+      if (btn) { btn.classList.remove('speaking'); btn.textContent = '🔊 Listen'; }
+    }, 300000); // 5 min safety for long readings
     if (btn) { btn.classList.add('speaking'); btn.textContent = '⏸️ Pause'; }
     return;
   }
 
-  // Start new reading
+  // Start new reading — iOS needs delay between cancel and speak
   const text = READINGS[currentReading].it;
   if (!text) return;
   speechSynthesis.cancel();
   readingPaused = false;
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.lang = 'it-IT';
-  utter.rate = readingSpeed;
-  utter.pitch = 1;
-  const voices = speechSynthesis.getVoices();
-  const itVoice = voices.find(v => v.lang.startsWith('it'));
-  if (itVoice) utter.voice = itVoice;
-  if (btn) { btn.classList.add('speaking'); btn.textContent = '⏸️ Pause'; }
-  utter.onend = () => { readingPaused = false; if (btn) { btn.classList.remove('speaking'); btn.textContent = '🔊 Listen'; } };
-  utter.onerror = () => { readingPaused = false; if (btn) { btn.classList.remove('speaking'); btn.textContent = '🔊 Listen'; } };
-  speechSynthesis.speak(utter);
+  if (readingSpeakTimer) clearTimeout(readingSpeakTimer);
+
+  const doSpeak = () => {
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = 'it-IT';
+    utter.rate = readingSpeed;
+    utter.pitch = 1;
+    const voices = speechSynthesis.getVoices();
+    const itVoice = voices.find(v => v.lang.startsWith('it'));
+    if (itVoice) utter.voice = itVoice;
+    if (btn) { btn.classList.add('speaking'); btn.textContent = '⏸️ Pause'; }
+
+    // Safety timeout — reset after 5 minutes (readings can be long)
+    readingSpeakTimer = setTimeout(() => {
+      readingPaused = false;
+      readingSpeakTimer = null;
+      if (btn) { btn.classList.remove('speaking'); btn.textContent = '🔊 Listen'; }
+    }, 300000);
+
+    utter.onend = () => {
+      if (readingSpeakTimer) { clearTimeout(readingSpeakTimer); readingSpeakTimer = null; }
+      readingPaused = false;
+      if (btn) { btn.classList.remove('speaking'); btn.textContent = '🔊 Listen'; }
+    };
+    utter.onerror = () => {
+      if (readingSpeakTimer) { clearTimeout(readingSpeakTimer); readingSpeakTimer = null; }
+      readingPaused = false;
+      if (btn) { btn.classList.remove('speaking'); btn.textContent = '🔊 Listen'; }
+    };
+    speechSynthesis.speak(utter);
+  };
+
+  setTimeout(doSpeak, 60);
 }
 
 // ── RESET ────────────────────────────────────────────
