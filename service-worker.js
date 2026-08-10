@@ -1,4 +1,4 @@
-const CACHE = 'supertonic-v58';
+const CACHE = 'supertonic-v86';
 const FILES = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', e => {
